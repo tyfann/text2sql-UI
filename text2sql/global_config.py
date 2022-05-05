@@ -47,20 +47,20 @@ def define_args_parser():
     parser.add_argument(
         '-c',
         '--config',
-        default='conf/text2sql.jsonnet',
+        default='conf/text2sql_csgsql.jsonnet',
         help='global config file path. it\'s priority is the lowest')
 
     general_args = parser.add_argument_group(title='general')
     general_args.add_argument(
         '--mode',
         type=str.lower,
-        default='debug',
+        default='preproc',
         required=False,
-        choices=['preproc', 'train', 'infer', 'test', 'debug'])
+        choices=['preproc', 'infer'])
     general_args.add_argument('--batch-size', type=int)
     general_args.add_argument('--beam-size', default=1, type=int)
     general_args.add_argument(
-        "--use-cuda", type=_arg_bool, default=True, help="is run in cuda mode")
+        "--use-cuda", type=_arg_bool, default=False, help="is run in cuda mode")
     general_args.add_argument(
         "--is-eval-value",
         type=_arg_bool,
@@ -105,6 +105,8 @@ def define_args_parser():
     data_args.add_argument(
         '--test-set', help='original dataset path or dumped file path')
     data_args.add_argument(
+        '--valid-set', help='original dataset path or dumped file path')
+    data_args.add_argument(
         '--eval-file', help='file to be evaluated(inferenced result)')
     data_args.add_argument('--output', help='')
     data_args.add_argument(
@@ -139,26 +141,15 @@ def gen_config(arg_list=None):
                 cli_args.db = os.path.join(root_path, 'db.pkl')
             if cli_args.grammar is None:
                 cli_args.grammar = os.path.join(root_path, 'label_vocabs')
-            if cli_args.train_set is None:
-                cli_args.train_set = os.path.join(root_path, 'train.pkl')
             if cli_args.dev_set is None:
-                cli_args.dev_set = os.path.join(root_path, 'dev.pkl')
-            if cli_args.test_set is None and not cli_args.mode.startswith(
-                    'train'):
-                cli_args.test_set = os.path.join(root_path, 'test.pkl')
+                cli_args.dev_set = os.path.join(root_path, 'valid.pkl')
         else:
             if cli_args.db is None:
                 cli_args.db = [
                     os.path.join(root_path, 'db_schema.json'),
                     os.path.join(root_path, 'db_content.json')
                 ]
-            if cli_args.train_set is None:
-                cli_args.train_set = os.path.join(root_path, 'train.json')
-            if cli_args.dev_set is None:
-                cli_args.dev_set = os.path.join(root_path, 'dev.json')
-            if cli_args.test_set is None and not cli_args.mode.startswith(
-                    'train'):
-                cli_args.test_set = os.path.join(root_path, 'test.json')
+            cli_args.valid_set = os.path.join(root_path, 'valid.json')
 
     arg_groups = {}
     for group in parser._action_groups:

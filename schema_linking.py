@@ -20,14 +20,12 @@ import json
 from collections import defaultdict
 import re
 
-from paddlenlp.transformers import BertTokenizer
-
 from text2sql.dataproc.dusql_dataset_v2 import load_tables
 
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(levelname)s: %(asctime)s %(filename)s'
-    ' [%(funcName)s:%(lineno)d][%(process)d] %(message)s',
+           ' [%(funcName)s:%(lineno)d][%(process)d] %(message)s',
     datefmt='%m-%d %H:%M:%S',
     filename=None,
     filemode='a')
@@ -109,51 +107,7 @@ def build_cell_index(db_dict):
         db.column_cells_index = column_cells
 
 
-def extract_value_from_sql(sql_json, sql_format='dusql'):
-    dct_col_values = defaultdict(list)
-    if sql_format == 'nl2sql':
-        for col, _, val in item['sql']['conds']:
-            dct_col_values[col].append(val)
-        return dct_col_values
-
-    def _merge_dict(base_dict, extra_dict):
-        for k, v in extra_dict.items():
-            base_dict[k].extend(v)
-
-    def _extract_value_from_sql_cond(cond, dct_col_values):
-        if type(cond[3]) is dict:
-            new_col_values = extract_value_from_sql(cond[3])
-            _merge_dict(dct_col_values, new_col_values)
-            return
-        col_id = cond[2][1][1]
-        dct_col_values[col_id].append(cond[3])
-        if cond[4] is not None:
-            dct_col_values[col_id].append(cond[4])
-
-    for table_unit in sql_json['from']['table_units']:
-        if type(table_unit[1]) is dict:
-            new_col_values = extract_value_from_sql(table_unit[1])
-            _merge_dict(dct_col_values, new_col_values)
-
-    for cond in sql_json['where'][::2]:
-        _extract_value_from_sql_cond(cond, dct_col_values)
-    for cond in sql_json['having'][::2]:
-        _extract_value_from_sql_cond(cond, dct_col_values)
-
-    if sql_json['intersect'] is not None:
-        new_col_values = extract_value_from_sql(sql_json['intersect'])
-        _merge_dict(dct_col_values, new_col_values)
-    if sql_json['union'] is not None:
-        new_col_values = extract_value_from_sql(sql_json['union'])
-        _merge_dict(dct_col_values, new_col_values)
-    if sql_json['except'] is not None:
-        new_col_values = extract_value_from_sql(sql_json['except'])
-        _merge_dict(dct_col_values, new_col_values)
-
-    return dct_col_values
-
-
-def search_values(query, db, extra_values):
+def search_values(query, db):
     lst_match_values = []
     for column, cell_index in zip(db.columns, db.column_cells_index):
         if column.id == 0:
@@ -183,11 +137,6 @@ def search_values(query, db, extra_values):
             for cell, base in cell_index[bigram]:
                 candi_cnt[cell] += 1.0 / base
 
-        if extra_values is not None and column.id in extra_values:
-            gold_values = extra_values[column.id]
-            for gval in gold_values:
-                candi_cnt[str(gval)] += 2.0
-
         lst_match_values.append(
             list(sorted(
                 candi_cnt.items(), key=lambda x: x[1], reverse=True))[:10])
@@ -196,62 +145,32 @@ def search_values(query, db, extra_values):
 
 
 if __name__ == "__main__":
-    import argparse
     try:
-        arg_parser = argparse.ArgumentParser(
-            description="linking candidate values for each column")
-        arg_parser.add_argument(
-            "input",
-            nargs="?",
-            type=argparse.FileType('r'),
-            default=sys.stdin,
-            help="input file path")
-        arg_parser.add_argument(
-            "-s", "--db-schema", required=True, help="file path")
-        arg_parser.add_argument(
-            "-c", "--db-content", required=True, help="file path")
-        arg_parser.add_argument(
-            "-o",
-            "--output",
-            type=argparse.FileType('w'),
-            default=sys.stdout,
-            help="output file path")
-        arg_parser.add_argument(
-            '-t', '--is-train', default=False, action="store_true")
-        arg_parser.add_argument(
-            '-f',
-            '--sql-format',
-            default='dusql',
-            choices=['dusql', 'nl2sql', 'cspider'])
-        args = arg_parser.parse_args()
-
-        sys.stderr.write('>>> loading databases...\n')
-        dct_db, _ = load_tables(args.db_schema, args.db_content)
+        db_schema = 'data/db_schema.json'
+        db_content = 'data/db_content.json'
+        dct_db, _ = load_tables(db_schema, db_content)
         build_cell_index(dct_db)
 
-        sys.stderr.write('>>> extracting values...\n')
         lst_output = []
-        for idx, item in enumerate(json.load(args.input)):
-            question_id = item.get('question_id', f'qid{idx:06d}')
-            question = item['question']
-            db_id = item['db_id']
-            db = dct_db[db_id]
 
-            extra_values = None
-            if args.is_train:
-                extra_values = extract_value_from_sql(item['sql'],
-                                                      args.sql_format)
+        question_id = f'qid{1:06d}'
+        question = '查一下电网中统计类型为调度口径抽蓄的上报电量值的最大值是多少'
+        db_id = 'AI_SEARCH_1'
+        db = dct_db[db_id]
 
-            match_values = search_values(question, db, extra_values)
-            lst_output.append({
-                "question_id": question_id,
-                "question": question,
-                "db_id": db_id,
-                "match_values": match_values
-            })
+        match_values = search_values(question, db)
+        lst_output.append({
+            "question_id": question_id,
+            "question": question,
+            "db_id": db_id,
+            "match_values": match_values
+        })
 
-        json.dump(lst_output, args.output, indent=2, ensure_ascii=False)
+        with open('data/match_values_valid.json', 'w') as f:
+            f.write(json.dumps(lst_output, indent=2, ensure_ascii=False))
+
+        # json.dump(lst_output, args.output, indent=2, ensure_ascii=False)
     except Exception as e:
         traceback.print_exc()
-        #logging.critical(traceback.format_exc())
+        # logging.critical(traceback.format_exc())
         exit(-1)

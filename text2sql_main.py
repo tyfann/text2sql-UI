@@ -13,12 +13,12 @@
 # limitations under the License.
 
 
-
 import sys
 import logging
 from pathlib import Path
 from functools import partial
 import random
+import os
 
 import numpy as np
 
@@ -26,11 +26,11 @@ import paddle
 
 import text2sql
 from text2sql import global_config
+import pickle
 
 from text2sql import dataproc
 from text2sql import launch
 from text2sql.grammars.dusql_v2 import DuSQLLanguageV2
-
 
 ModelClass = None
 GrammarClass = None
@@ -48,28 +48,34 @@ def preprocess(config):
         'is_cached': False,
     }
 
-    output_base = config.data.output
-    if config.data.train_set is not None:
-        dataset = DatasetClass(
-            name='train', data_file=config.data.train_set, **dataset_config)
-        dataset.save(output_base, save_db=True)
-        g_label_encoder.save(Path(output_base) / 'label_vocabs')
+    save_dir = 'data/preproc'
 
-    if config.data.dev_set is not None:
-        dataset = DatasetClass(
-            name='dev', data_file=config.data.dev_set, **dataset_config)
-        dataset.save(output_base, save_db=False)
+    dataset = DatasetClass(name='valid', data_file=config.data.valid_set, **dataset_config)
 
-    if config.data.test_set is not None:
-        dataset = DatasetClass(
-            name='test', data_file=config.data.test_set, **dataset_config)
-        dataset.save(output_base, save_db=False)
+    os.makedirs(save_dir, exist_ok=True)
+    with open(Path(save_dir) / f'valid.pkl', 'wb') as ofs:
+        pickle.dump([dataset._examples, dataset._qid2index], ofs)
+
+    # dataset.save(save_dir, save_db=False)
 
 
-def inference(config):
+def load_model(config):
     if config.model.init_model_params is None:
         raise RuntimeError(
             "config.init_model_params should be a valid model path")
+
+    model = ModelClass(config.model, g_label_encoder)
+    state_dict = paddle.load(config.model.init_model_params)
+    model.set_state_dict(state_dict)
+    logging.info("loading model successfully!")
+
+    return model
+
+
+def inference(config, model):
+    # if config.model.init_model_params is None:
+    #     raise RuntimeError(
+    #         "config.init_model_params should be a valid model path")
 
     dataset_config = {
         'db_file': config.data.db,
@@ -77,23 +83,22 @@ def inference(config):
         'label_encoder': g_label_encoder,
         'is_cached': True
     }
-    test_set = DatasetClass(
-        name='test', data_file=config.data.test_set, **dataset_config)
-    test_reader = DataLoaderClass(config, test_set, batch_size=1, shuffle=False)
+    valid_set = DatasetClass(
+        name='valid', data_file=config.data.valid_set, **dataset_config)
+    test_reader = DataLoaderClass(config, valid_set, batch_size=1, shuffle=False)
 
-    model = ModelClass(config.model, g_label_encoder)
-    logging.info("loading model param from %s", config.model.init_model_params)
-    state_dict = paddle.load(config.model.init_model_params)
-    model.set_state_dict(state_dict)
+    # model = ModelClass(config.model, g_label_encoder)
+    # logging.info("loading model param from %s", config.model.init_model_params)
+    # state_dict = paddle.load(config.model.init_model_params)
+    # model.set_state_dict(state_dict)
 
     logging.info("start of inference...")
-    launch.infer.inference(
+    pred_query = launch.infer.inference(
         model,
         test_reader,
-        config.data.output,
-        beam_size=config.general.beam_size,
-        model_name=config.model.model_name)
+        beam_size=config.general.beam_size)
     logging.info("end of inference...")
+    return pred_query
 
 
 def init_env(config):
@@ -121,10 +126,6 @@ def init_env(config):
 
     if config.model.grammar_type == 'dusql_v2':
         GrammarClass = DuSQLLanguageV2
-    # elif config.model.grammar_type == 'nl2sql':
-    #     GrammarClass = NL2SQLLanguage
-    # elif config.model.grammar_type == 'cspider_v2':
-    #     GrammarClass = CSpiderLanguageV2
     else:
         raise ValueError('grammar type is not supported: %s' %
                          (config.model.grammar_type))
@@ -153,8 +154,12 @@ def _set_proc_name(config, tag_base):
     setproctitle.setproctitle(tag_base + '_' + config.data.output.rstrip('/')
                               .split('/')[-1])
 
+
 if __name__ == "__main__":
-    config = global_config.gen_config()
+    # config = global_config.gen_config(['--mode', 'infer', '--is-cached', 'false'])
+    config = global_config.gen_config(
+        ['--mode', 'infer', '--init-model-param', 'model/model.pdparams', '--valid-set', 'data/preproc/valid.pkl',
+         '--data-root', 'data/preproc'])
     init_env(config)
 
     run_mode = config.general.mode

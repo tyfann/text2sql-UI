@@ -226,7 +226,7 @@ bash ./run.sh ./script/text2sql_main.py --mode infer \
          --config conf/text2sql_csgsql.jsonnet \
          --data-root data/CSgSQL-div/preproc \
          --test-set data/CSgSQL-div/preproc/test.pkl \
-         --init-model-param output/csgsql_baseline/epoch030_acc30.0000/model.pdparams \
+         --init-model-param model/model.pdparams \
          --output output/csgsql_test_infer_result.sql
 
 ```
